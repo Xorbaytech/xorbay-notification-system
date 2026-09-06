@@ -1,0 +1,49 @@
+﻿# Secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Redis dump files
+*.rdb
+dump.rdb
+
+# Local scratch, debug & testing scripts
+check-db.js
+query-pg.js
+query-outbox.ts
+test-poison.ts
+send-event.bat
+*.ps1
+event.json
+
+# Local dev seed fixtures
+seed*.js
+seed.ts
+
+# Verification run logs & audit reports
+docs/verification/final-architecture-traceability-audit.md
+docs/verification/notification-system-final-validation-*.md
+docs/verification/phase*-report-*.md
+docs/verification/phase16-campaign-batch-orchestration.md
+docs/verification/production-rollback-runbook.md
+docs/verification/runtime-architecture-audit.md
+
+# Load test scripts
+test/load/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

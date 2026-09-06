@@ -1,0 +1,465 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum CommunicationStatus {
+  QUEUED
+  PROCESSING
+  SENT
+  DELIVERED
+  FAILED
+  CANCELLED
+}
+
+enum DeliveryStatus {
+  PLANNED
+  QUEUED
+  PROCESSING
+  SENT
+  DELIVERED
+  FAILED
+  RETRYING
+  CANCELLED
+}
+
+enum AttemptStatus {
+  QUEUED
+  PROCESSING
+  SENT
+  DELIVERED
+  FAILED
+  CANCELLED
+}
+
+model ProcessedEvent {
+  id               String   @id @db.Uuid
+  tenantId         String   @map("tenant_id")
+  sourceModuleId   String   @map("source_module_id")
+  eventType        String   @map("event_type")
+  sourceEventId    String   @map("source_event_id")
+  aggregateId      String   @map("aggregate_id")
+  aggregateVersion Int      @map("aggregate_version")
+  schemaVersion    String   @map("schema_version")
+  correlationId    String   @map("correlation_id")
+  priorityHint     String?  @map("priority_hint")
+  payload          Json
+  status           String
+  attemptCount     Int      @default(0) @map("attempt_count")
+  nextAttemptAt    DateTime? @map("next_attempt_at")
+  lastErrorCode    String?  @map("last_error_code")
+  lastErrorMessage String?  @map("last_error_message")
+  version          Int      @default(1)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, sourceModuleId, eventType, aggregateId, aggregateVersion, sourceEventId], name: "processed_event_unique")
+    @@index([tenantId, sourceModuleId, eventType])
+    @@index([tenantId, aggregateId, aggregateVersion])
+    @@index([status, nextAttemptAt, createdAt], name: "processed_events_status_next_attempt_idx")
+    @@map("processed_events")
+}
+
+/// Durable bulk communication lifecycle. A campaign groups one logical
+/// broadcast, while batches provide bounded progress and recovery units.
+model Campaign {
+  id               String           @id @db.Uuid
+  tenantId         String           @map("tenant_id")
+  sourceModuleId   String           @map("source_module_id")
+  correlationId    String           @map("correlation_id")
+  communicationId  String?          @map("communication_id") @db.Uuid
+  idempotencyKey   String?          @map("idempotency_key")
+  templateIdentity String           @map("template_identity")
+  templateVersion  Int              @default(1) @map("template_version")
+  channel          String
+  payload          Json
+  status           String
+  totalRecipients  Int              @map("total_recipients")
+  totalBatches     Int              @map("total_batches")
+  completedBatches Int              @default(0) @map("completed_batches")
+  failedBatches    Int              @default(0) @map("failed_batches")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+  startedAt        DateTime?        @map("started_at")
+  completedAt      DateTime?        @map("completed_at")
+  communications   Communication[]
+  batches          BroadcastBatch[]
+
+  @@unique([tenantId, idempotencyKey], name: "campaign_idempotency_unique")
+  @@index([tenantId, communicationId])
+  @@index([tenantId, status, createdAt])
+  @@map("campaigns")
+}
+
+/// Bounded execution unit for a campaign. Delivery rows remain the common
+/// runtime unit; this record owns aggregate progress and batch recovery.
+model BroadcastBatch {
+  id                String             @id @db.Uuid
+  campaignId        String             @map("campaign_id") @db.Uuid
+  tenantId          String             @map("tenant_id")
+  batchNumber       Int                @map("batch_number")
+  status            String
+  recipientCount    Int                @map("recipient_count")
+  queuedCount       Int                @default(0) @map("queued_count")
+  acceptedCount     Int                @default(0) @map("accepted_count")
+  deliveredCount    Int                @default(0) @map("delivered_count")
+  failedCount       Int                @default(0) @map("failed_count")
+  idempotencyKey    String             @map("idempotency_key")
+  queueAcceptedAt   DateTime?          @map("queue_accepted_at")
+  startedAt         DateTime?          @map("started_at")
+  completedAt       DateTime?          @map("completed_at")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+  campaign          Campaign           @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  deliveries        Delivery[]
+  queuePublications QueuePublication[]
+
+  @@unique([campaignId, batchNumber], name: "campaign_batch_number_unique")
+  @@unique([tenantId, idempotencyKey], name: "batch_idempotency_unique")
+  @@index([tenantId, status, createdAt])
+  @@index([campaignId, status])
+  @@map("broadcast_batches")
+}
+
+model Communication {
+  id               String              @id @db.Uuid
+  tenantId         String              @map("tenant_id")
+  campaignId       String?             @map("campaign_id") @db.Uuid
+  sourceModuleId   String              @map("source_module_id")
+  eventType        String              @map("event_type")
+  sourceEventId    String              @map("source_event_id")
+  aggregateId      String              @map("aggregate_id")
+  aggregateVersion Int                 @map("aggregate_version")
+  schemaVersion    String              @map("schema_version")
+  correlationId    String              @map("correlation_id")
+  occurredAt       DateTime            @map("occurred_at")
+  payload          Json
+  status           CommunicationStatus
+  version          Int                 @default(1)
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+  deliveries       Delivery[]
+  auditRecords     AuditRecord[]
+  campaign         Campaign?           @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, sourceModuleId, eventType, aggregateId, aggregateVersion, sourceEventId], name: "communication_unique")
+  @@index([tenantId, status])
+  @@index([tenantId, sourceModuleId, eventType])
+  @@index([tenantId, aggregateId, aggregateVersion])
+  @@map("communications")
+}
+
+model Delivery {
+  id                   String          @id @db.Uuid
+  communicationId      String          @map("communication_id") @db.Uuid
+  batchId              String?         @map("batch_id") @db.Uuid
+  tenantId             String          @map("tenant_id")
+  channel              String
+  recipient            String
+  provider             String?
+  /// The delivery this record was created from during automatic fallback.
+  /// Null means this is an original planned delivery.
+  fallbackOfDeliveryId String?         @map("fallback_of_delivery_id") @db.Uuid
+  status               DeliveryStatus
+  attemptCount         Int             @default(0) @map("attempt_count")
+  version              Int             @default(1)
+  scheduledAt          DateTime?       @map("scheduled_at")
+  sentAt               DateTime?       @map("sent_at")
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
+  communication        Communication   @relation(fields: [communicationId], references: [id], onDelete: Restrict)
+  batch                BroadcastBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  fallbackOf           Delivery?       @relation("DeliveryFallback", fields: [fallbackOfDeliveryId], references: [id], onDelete: Restrict)
+  fallbacks            Delivery[]      @relation("DeliveryFallback")
+  attempts             Attempt[]
+  auditRecords         AuditRecord[]
+
+  @@index([tenantId, status])
+  @@index([communicationId])
+  @@index([tenantId, communicationId])
+  @@index([communicationId, recipient])
+  @@map("deliveries")
+}
+
+model Attempt {
+  id            String        @id @db.Uuid
+  deliveryId    String        @map("delivery_id") @db.Uuid
+  tenantId      String        @map("tenant_id")
+  attemptNumber Int           @map("attempt_number")
+  provider      String
+  providerRef   String?       @map("provider_ref")
+  status        AttemptStatus
+  responseCode  String?       @map("response_code")
+  errorMessage  String?       @map("error_message")
+  sentAt        DateTime?     @map("sent_at")
+  version       Int           @default(1)
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  delivery      Delivery      @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+  auditRecords  AuditRecord[]
+
+  @@unique([deliveryId, attemptNumber], name: "attempt_unique")
+  @@index([deliveryId])
+  @@index([tenantId, status])
+  @@map("attempts")
+}
+
+/// Durable idempotency ledger for external provider callbacks.
+model ProviderCallbackEvent {
+  id              String   @id @db.Uuid
+  tenantId        String   @map("tenant_id")
+  provider        String
+  providerEventId String   @map("provider_event_id")
+  deliveryId      String?  @map("delivery_id") @db.Uuid
+  attemptId       String?  @map("attempt_id") @db.Uuid
+  outcome         String
+  payload         Json?
+  receivedAt      DateTime @default(now()) @map("received_at")
+
+  @@unique([tenantId, provider, providerEventId], name: "provider_callback_event_unique")
+  @@index([tenantId, deliveryId])
+  @@map("provider_callback_events")
+}
+
+model QueuePublication {
+  id               String          @id @db.Uuid
+  tenantId         String          @map("tenant_id")
+  aggregateType    String          @map("aggregate_type")
+  aggregateId      String          @map("aggregate_id")
+  batchId          String?         @map("batch_id") @db.Uuid
+  workType         String          @map("work_type")
+  priority         Int             @default(5)
+  stableJobKey     String          @map("stable_job_key")
+  payloadReference String?         @map("payload_reference")
+  status           String
+  attemptCount     Int             @default(0) @map("attempt_count")
+  availableAt      DateTime        @default(now()) @map("available_at")
+  lastAttemptAt    DateTime?       @map("last_attempt_at")
+  acceptedAt       DateTime?       @map("accepted_at")
+  failureCode      String?         @map("failure_code")
+  failureReason    String?         @map("failure_reason")
+  correlationId    String          @map("correlation_id")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  batch            BroadcastBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, stableJobKey], name: "queue_publication_stable_job_unique")
+  @@index([status, availableAt])
+  @@index([tenantId, status, availableAt])
+  @@index([aggregateType, aggregateId])
+  @@index([tenantId, batchId, status])
+  @@map("queue_publications")
+}
+
+model AuditRecord {
+  id              String         @id @map("audit_id") @db.Uuid
+  tenantId        String         @map("tenant_id")
+  communicationId String?        @map("communication_id") @db.Uuid
+  deliveryId      String?        @map("delivery_id") @db.Uuid
+  attemptId       String?        @map("attempt_id") @db.Uuid
+  correlationId   String         @map("correlation_id")
+  eventType       String         @map("event_type")
+  actorType       String         @map("actor_type")
+  actorReference  String?        @map("actor_reference")
+  previousState   String?        @map("previous_state")
+  newState        String?        @map("new_state")
+  decision        String?
+  reasonCode      String?        @map("reason_code")
+  metadata        Json?
+  createdAt       DateTime       @default(now()) @map("created_at")
+  communication   Communication? @relation(fields: [communicationId], references: [id], onDelete: Restrict)
+  delivery        Delivery?      @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+  attempt         Attempt?       @relation(fields: [attemptId], references: [id], onDelete: Restrict)
+
+  @@index([communicationId, createdAt])
+  @@index([deliveryId, createdAt])
+  @@index([correlationId, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("audit_records")
+}
+
+/// Scheduled delivery plan — persists the scheduling intent for one-shot and
+/// recurring communications. Authoritative scheduler state per SPEC-009 §5.
+///
+/// mode: ONE_SHOT | RECURRING
+/// status: SCHEDULED | CANCELLED | EXPIRED | COMPLETED
+model ScheduledDeliveryPlan {
+  id               String                @id @map("scheduled_plan_id") @db.Uuid
+  tenantId         String                @map("tenant_id")
+  deliveryId       String                @map("delivery_id") @db.Uuid
+  mode             String
+  scheduledAt      DateTime?             @map("scheduled_at")
+  cronExpression   String?               @map("cron_expression")
+  timezone         String
+  startsAt         DateTime?             @map("starts_at")
+  nextOccurrenceAt DateTime?             @map("next_occurrence_at")
+  expiresAt        DateTime?             @map("expires_at")
+  status           String
+  scheduleVersion  Int                   @default(1) @map("schedule_version")
+  correlationId    String                @map("correlation_id")
+  createdAt        DateTime              @default(now()) @map("created_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
+  occurrences      ScheduledOccurrence[]
+
+  @@index([tenantId, status, nextOccurrenceAt])
+  @@index([tenantId, deliveryId])
+  @@map("scheduled_delivery_plans")
+}
+
+/// One occurrence of a recurring (or single release record of a one-shot) plan.
+/// Occurrence identity = scheduledPlanId + occurrenceAt (UNIQUE constraint).
+/// status: PENDING | CLAIMED | RELEASED | MISSED | EXPIRED
+model ScheduledOccurrence {
+  id              String                @id @map("occurrence_id") @db.Uuid
+  scheduledPlanId String                @map("scheduled_plan_id") @db.Uuid
+  occurrenceAt    DateTime              @map("occurrence_at")
+  status          String
+  scheduleVersion Int                   @map("schedule_version")
+  claimedAt       DateTime?             @map("claimed_at")
+  releasedAt      DateTime?             @map("released_at")
+  publicationId   String?               @map("publication_id") @db.Uuid
+  version         Int                   @default(1)
+  createdAt       DateTime              @default(now()) @map("created_at")
+  updatedAt       DateTime              @updatedAt @map("updated_at")
+  plan            ScheduledDeliveryPlan @relation(fields: [scheduledPlanId], references: [id], onDelete: Restrict)
+
+  @@unique([scheduledPlanId, occurrenceAt], name: "occurrence_unique")
+  @@index([status, occurrenceAt])
+  @@index([scheduledPlanId, status])
+  @@map("scheduled_occurrences")
+}
+
+model PublisherModule {
+  id        String               @id @db.Uuid
+  tenantId  String               @map("tenant_id")
+  moduleId  String               @map("module_id")
+  name      String
+  isActive  Boolean              @default(true) @map("is_active")
+  createdAt DateTime             @default(now()) @map("created_at")
+  updatedAt DateTime             @updatedAt @map("updated_at")
+  events    PublisherEventType[]
+
+  @@unique([tenantId, moduleId], name: "publisher_module_unique")
+  @@map("publisher_modules")
+}
+
+model PublisherEventType {
+  id              String          @id @db.Uuid
+  moduleId        String          @map("module_id") @db.Uuid
+  eventType       String          @map("event_type")
+  schemaVersion   String          @default("1.0") @map("schema_version")
+  isActive        Boolean         @default(true) @map("is_active")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+  publisherModule PublisherModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([moduleId, eventType], name: "publisher_event_type_unique")
+  @@map("publisher_event_types")
+}
+
+/// Notification template. identity + version together identify a template variant.
+model Template {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  sourceModuleId String   @map("source_module_id")
+  eventType      String   @map("event_type")
+  identity       String
+  version        Int      @default(1)
+  content        Json
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, sourceModuleId, eventType, identity, version], name: "template_unique")
+  @@index([tenantId, sourceModuleId, eventType])
+  @@map("templates")
+}
+
+/// Known recipient. profile stores contact details (email, phone, push token).
+model Recipient {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  sourceModuleId String   @map("source_module_id")
+  recipientId    String   @map("recipient_id")
+  profile        Json
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, sourceModuleId, recipientId], name: "recipient_unique")
+  @@index([tenantId, sourceModuleId])
+  @@map("recipients")
+}
+
+/// Channel preference for a specific recipient. decision: ALLOW | DENY.
+model Preference {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  sourceModuleId String   @map("source_module_id")
+  recipientId    String   @map("recipient_id")
+  channel        String
+  decision       String
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, sourceModuleId, recipientId, channel], name: "preference_unique")
+  @@index([tenantId, sourceModuleId, recipientId])
+  @@map("preferences")
+}
+
+/// Determines whether a given event type warrants a notification.
+/// decision: NOTIFY | IGNORE | AUDIT_ONLY
+/// Higher priority number = evaluated first.
+model SignificanceRule {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  sourceModuleId String   @map("source_module_id")
+  eventType      String   @map("event_type")
+  decision       String
+  priority       Int      @default(0)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, sourceModuleId, eventType], name: "significance_rule_unique")
+  @@index([tenantId, sourceModuleId, eventType, isActive])
+  @@map("significance_rules")
+}
+
+/// Determines what template to use and whether to suppress delivery.
+/// decision: ALLOWED | SUPPRESSED
+model PolicyRule {
+  id               String   @id @db.Uuid
+  tenantId         String   @map("tenant_id")
+  sourceModuleId   String   @map("source_module_id")
+  eventType        String   @map("event_type")
+  decision         String
+  templateIdentity String?  @map("template_identity")
+  templateVersion  Int?     @map("template_version")
+  reason           String?
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, sourceModuleId, eventType], name: "policy_rule_unique")
+  @@index([tenantId, sourceModuleId, eventType, isActive])
+  @@map("policy_rules")
+}
+
+/// Stores persistently failed deliveries for manual review and requeueing.
+model DeadLetterRecord {
+  id              String   @id @db.Uuid
+  tenantId        String   @map("tenant_id")
+  communicationId String   @map("communication_id")
+  deliveryId      String   @map("delivery_id")
+  channel         String
+  recipient       String
+  failureCode     String?  @map("failure_code")
+  failureReason   String?  @map("failure_reason")
+  payload         Json     @map("payload")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, createdAt])
+  @@map("dead_letter_records")
+}
