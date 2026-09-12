@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaCommunicationRepository } from './repositories/prisma-communication.repository';
 import { PrismaDeliveryRepository } from './repositories/prisma-delivery.repository';
@@ -30,7 +31,15 @@ const prismaClientProvider = {
     if (!connectionString) {
       throw new Error('DATABASE_URL is required to initialize Prisma.');
     }
-    const adapter = new PrismaPg({ connectionString });
+    const isCloudPostgres = connectionString.includes('neon.tech') || connectionString.includes('sslmode=require');
+    const pool = new Pool({
+      connectionString,
+      max: 20,
+      connectionTimeoutMillis: 20000,
+      idleTimeoutMillis: 30000,
+      ssl: isCloudPostgres ? { rejectUnauthorized: false } : undefined,
+    });
+    const adapter = new PrismaPg(pool);
     return new PrismaClient({ adapter });
   },
 };

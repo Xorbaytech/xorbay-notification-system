@@ -1,61 +1,139 @@
-# Communication & Notification Platform — Implementation
+# Communication & Notification Platform — Microservice
 
-## Implementation Rule
+A high-throughput, fault-tolerant communication and notification platform built with **NestJS**, **Prisma ORM**, **Neon PostgreSQL**, and **BullMQ (Redis)**.
 
-Every implementation module must be derived from and verified against the approved architecture documentation before code is written.
+---
 
-Required study sequence for a module:
+## Architecture Overview
 
-1. SRS
-2. Relevant Business Layer decision(s)
-3. Relevant HLD view(s)
-4. Relevant Runtime Scenario(s)
-5. Relevant API Contract(s)
-6. Relevant LLD document(s)
-7. Relevant DB Design document(s), when persistence is involved
-8. Cross-Architecture Verification
-9. Implementation
-10. Unit and integration tests
+- **Runtime & Framework**: NestJS (TypeScript, Node.js 22)
+- **Database**: PostgreSQL (Neon Serverless PostgreSQL with connection pooling & `@prisma/adapter-pg`)
+- **Queue & Workers**: BullMQ powered by Redis for reliable, asynchronous notification deliveries
+- **Delivery Channels**:
+  - `EMAIL` (SMTP)
+  - `IN_APP` (ERP webhook callbacks)
+  - `WHATSAPP` (ERP webhook callbacks)
+- **Reliability & Resilience**: Outbox relay pattern, dead letter queue (DLQ), rate limiting gates, and tenant preference routing.
+- **Monitoring**: Prometheus metrics exported at `/api/v1/metrics`.
 
-## Current implementation slice
+---
 
-**API-01 — Business Event Ingestion (local foundation)**
+## Quick Start (Docker Compose) — Recommended
 
-Implemented so far:
+The easiest way to run the platform locally with Redis and your Neon PostgreSQL database:
 
-- NestJS application bootstrap
-- `/api/v1/events` POST endpoint
-- API-01 request DTO and strict transport validation
-- Publisher authentication boundary for local development
-- Registered publisher module/event-type validation adapter
-- Application use case behind an interface/port boundary
-- API-01 acceptance response (`202 Accepted`)
-- Unit tests for authentication, validation and acceptance
-
-This is intentionally **not the complete API-01 runtime yet**. Durable composite idempotency, aggregate-version ordering, audit persistence and the asynchronous hand-off will be implemented only after their corresponding LLD/DB/runtime details are completed.
-
-## Local setup
-
-```bash
-npm install
-copy .env.example .env
-npm run build
-npm test
-npm run start:dev
+### 1. Configure Environment Variables
+Ensure `.env` contains your Neon `DATABASE_URL`:
+```env
+PORT=3002
+DATABASE_URL="postgresql://neondb_owner:npg_mLcBy7urWM0R@ep-rough-leaf-b3t133vu-pooler.c-4.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+PUBLISHER_API_KEY=local-development-key
+REDIS_URL=redis://redis:6379
 ```
 
-The API should listen on `http://localhost:3000` by default.
+### 2. Build and Start Services
+```bash
+docker compose up -d --build app redis
+```
 
-### Test API-01
+### 3. Verify Health & Logs
+```bash
+# View real-time logs
+docker compose logs -f app
 
-Header:
+# Check status of running containers
+docker compose ps
 
-```text
+# Test Prometheus health endpoint
+curl http://localhost:3002/api/v1/metrics
+```
+
+### 4. Stop Services
+```bash
+docker compose down
+```
+
+---
+
+## Local Development (Without Docker)
+
+### 1. Install Dependencies
+```bash
+npm install
+```
+
+### 2. Configure `.env`
+```bash
+cp .env.example .env
+```
+Ensure a Redis instance is running locally on port `6379` (`REDIS_HOST=localhost`, `REDIS_PORT=6379`).
+
+### 3. Apply Prisma Migrations
+```bash
+# Apply migrations to database
+npx prisma migrate deploy
+
+# Generate Prisma client
+npx prisma generate
+```
+
+### 4. Build and Run
+```bash
+# Development watch mode
+npm run start:dev
+
+# Production build
+npm run build
+npm start
+```
+The API listens on `http://localhost:3002` with global prefix `/api/v1`.
+
+---
+
+## Deployment Options
+
+### Option A: Container Deployment (Railway / Render / AWS ECS / Fly.io)
+Because this microservice runs persistent **BullMQ workers** and scheduled **Outbox crons**, container platforms provide the best production environment.
+Use the included [`Dockerfile`](file:///Users/priyanshu/Desktop/priyanshu/xorbay/admin/Notification-System/9.0-Implementation/Dockerfile) to deploy directly.
+
+### Option B: Vercel (API Layer) via GitHub Actions
+A GitHub Actions workflow ([`.github/workflows/deploy-vercel.yml`](file:///Users/priyanshu/Desktop/priyanshu/xorbay/admin/Notification-System/9.0-Implementation/.github/workflows/deploy-vercel.yml)) and serverless entrypoint ([`api/index.ts`](file:///Users/priyanshu/Desktop/priyanshu/xorbay/admin/Notification-System/9.0-Implementation/api/index.ts)) are included.
+
+1. Add the following GitHub Repository Secrets (**Settings → Secrets and variables → Actions**):
+   - `VERCEL_TOKEN`: Vercel Personal Access Token.
+   - `VERCEL_ORG_ID`: Vercel Team / Account ID.
+   - `VERCEL_PROJECT_ID`: Vercel Project ID.
+   - `DATABASE_URL`: Your Neon PostgreSQL direct or pooled URL.
+2. Push to the `main` branch to trigger automated deployment.
+
+> [!NOTE]
+> On Vercel serverless functions, background workers and persistent crons do not run continuously. For active background processing, run a worker container or trigger workers via external cron/webhooks.
+
+---
+
+## Core API Endpoints
+
+All endpoints are prefixed with `/api/v1`:
+
+| Method | Endpoint | Description | Auth Header |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/v1/events` | Ingest upstream business events (Outbox flow) | `x-publisher-key` |
+| `POST` | `/api/v1/direct` | Send immediate transactional notifications | `x-publisher-key` |
+| `POST` | `/api/v1/broadcasts` | Trigger bulk broadcast campaigns | `x-publisher-key` |
+| `GET` | `/api/v1/dlq` | List dead-letter queue failed messages | `x-publisher-key` |
+| `POST` | `/api/v1/dlq/:id/requeue` | Requeue a dead-letter item | `x-publisher-key` |
+| `POST` | `/api/v1/management/register-publisher` | Register a new upstream publisher module | `x-publisher-key` |
+| `GET` | `/api/v1/metrics` | Prometheus metrics and health status | None |
+
+### Sample Request: Business Event Ingestion (`API-01`)
+
+**Headers**:
+```http
+Content-Type: application/json
 x-publisher-key: local-development-key
 ```
 
-Request:
-
+**Request**:
 ```json
 {
   "eventId": "evt_01JXXXXXXXXXXXX",
@@ -79,12 +157,7 @@ Request:
 }
 ```
 
-Expected response:
-
-```http
-202 Accepted
-```
-
+**Response (`202 Accepted`)**:
 ```json
 {
   "eventId": "evt_01JXXXXXXXXXXXX",
@@ -93,17 +166,17 @@ Expected response:
 }
 ```
 
-## Architectural Constraints
+---
 
-- Preserve the approved business decisions.
-- Preserve explicit ownership of responsibilities.
-- Follow SRP, OCP and DIP.
-- Maintain high cohesion and loose coupling.
-- Use interface/port based communication where specified by the LLD.
-- Keep business rules independent of infrastructure/framework details where the architecture requires it.
-- Do not introduce implementation decisions that contradict the approved documents.
-- Do not modify the architecture documents as a shortcut for implementation.
+## Testing
 
-## Implementation Sequence
+```bash
+# Unit tests
+npm run test
 
-Implementation proceeds module-by-module and runtime-scenario-by-runtime-scenario. Before each module is implemented, its relevant documentation is reviewed and an implementation mapping is established.
+# Integration tests
+npm run test:integration
+
+# E2E tests
+npm run test:e2e
+```

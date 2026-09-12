@@ -80,7 +80,7 @@ export class OutboxProcessorCron {
     private readonly transactionContext: TransactionContextPort,
   ) {}
 
-  @Cron(CronExpression.EVERY_SECOND)
+  @Cron(CronExpression.EVERY_5_SECONDS)
   async handleCron() {
     // A cron tick can overlap when recipient resolution or the database is
     // slow.  Prevent a second local drain from claiming another burst while

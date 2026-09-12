@@ -1,42 +1,27 @@
-version: '3.8'
-
 services:
   app:
     build:
       context: .
+      dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "3002:3002"
+    env_file:
+      - .env
     environment:
+      - PORT=3002
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://postgres:Vishesh@1234@postgres:5432/notification_db?schema=public
+      # Using direct Neon endpoint (without -pooler) for persistent worker transaction support
+      - DATABASE_URL=postgresql://neondb_owner:npg_mLcBy7urWM0R@ep-rough-leaf-b3t133vu.c-4.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
       - REDIS_URL=redis://redis:6379
-      - PUBLISHER_API_KEY=local-development-key
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: Vishesh@1234
-      POSTGRES_DB: notification_db
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      - redis
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    restart: unless-stopped
 
   prometheus:
     image: prom/prometheus:latest
@@ -44,6 +29,3 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
-
-volumes:
-  pgdata:
