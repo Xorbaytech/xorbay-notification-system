@@ -42,4 +42,4 @@ import { redisConnectionOptions } from './redis/redis-connection';
     QueueHealthService,
   ],
 })
-export class QueueModule {}
+export class QueueModule { }
