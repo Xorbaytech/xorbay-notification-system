@@ -1,12 +1,35 @@
-app:
-  image: ghcr.io/xorbaytech/xorbay-notification-system:${IMAGE_TAG}
-  ports:
-    - "3002:3000"
-  environment:
-    NODE_ENV: production
-    DATABASE_URL: ${DATABASE_URL}
-    REDIS_HOST: ${REDIS_HOST}
-    REDIS_PORT: ${REDIS_PORT}
-    PUBLISHER_API_KEY: ${PUBLISHER_API_KEY}
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
+version: '3.8'
+
+services:
+  app:
+    image: ghcr.io/xorbaytech/xorbay-notification-system:${IMAGE_TAG}
+    ports:
+      - "3002:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      PUBLISHER_API_KEY: ${PUBLISHER_API_KEY}
+      ERP_API_URL: ${ERP_API_URL}
+      ERP_CALLBACK_SECRET: ${ERP_CALLBACK_SECRET}
+      ERP_CALLBACK_TIMEOUT_MS: ${ERP_CALLBACK_TIMEOUT_MS}
+      DELIVERY_WORKER_CONCURRENCY: ${DELIVERY_WORKER_CONCURRENCY}
+      CRITICAL_WORKER_CONCURRENCY: ${CRITICAL_WORKER_CONCURRENCY}
+      BULK_WORKER_CONCURRENCY: ${BULK_WORKER_CONCURRENCY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - staging-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+networks:
+  staging-network:
+    external: true
