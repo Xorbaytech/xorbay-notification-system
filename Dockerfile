@@ -5,7 +5,7 @@ WORKDIR /usr/src/app
 
 # A wildcard is used to ensure both package.json AND package-lock.json are copied
 COPY package*.json ./
-COPY prisma ./prisma/
+# COPY prisma ./prisma/
 
 # Install app dependencies
 RUN npm ci
@@ -14,7 +14,8 @@ RUN npm ci
 COPY . .
 
 # Generate prisma client and build the app
-RUN npx prisma generate
+# RUN npx prisma generate
+RUN npm run prisma:generate
 RUN npm run build
 
 # Stage 2: Production image
@@ -27,7 +28,7 @@ COPY prisma ./prisma/
 
 # Install only production dependencies
 RUN npm ci --only=production
-RUN npx prisma generate
+# RUN npx prisma generate
 
 # Copy built application from builder stage
 COPY --from=builder /usr/src/app/dist ./dist
