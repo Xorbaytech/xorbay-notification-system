@@ -3,6 +3,6 @@ global:
 
 scrape_configs:
   - job_name: 'notification-app'
-    metrics_path: '/api/v1/metrics'
+    metrics_path: '/metrics'
     static_configs:
       - targets: ['app:3000']

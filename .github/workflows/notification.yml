@@ -95,12 +95,13 @@ jobs:
           export DISPLAY=:0
 
           ssh-add /tmp/staging_key
-          echo "GitHub Actions SSH key fingerprint:"
-          ssh-add -l
 
           ssh \
             -o IdentitiesOnly=yes \
             -i /tmp/staging_key \
             -o StrictHostKeyChecking=no \
             ${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }} \
-            "docker pull ghcr.io/xorbaytech/xorbay-notification-system:${{ github.sha }}"
+            "cd /opt/notification-service && \
+            export IMAGE_TAG=${{ github.sha }} && \
+            docker compose pull app && \
+            docker compose up -d app"

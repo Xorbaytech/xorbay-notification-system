@@ -28,7 +28,9 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - staging-network
 
 networks:
   staging-network:
