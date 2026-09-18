@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  app:
+  notification:
     image: ghcr.io/xorbaytech/xorbay-notification-system:${IMAGE_TAG}
     ports:
       - "3002:3000"
